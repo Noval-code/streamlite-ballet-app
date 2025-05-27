@@ -110,55 +110,70 @@ def save_to_mongodb(articles):
 def visualize_data():
     # Fetch data from MongoDB
     data = list(collection.find())
+    from dateutil import parser
+    import pandas as pd
+    import streamlit as st
+    import plotly.express as px
+    import re
+
+    def extract_date(text):
+        try:
+            # Ambil tanggal dari format seperti "WolipopKamis, 06 Feb 2025 12:57 WIB"
+            cleaned = re.search(r'(\d{1,2} \w+ \d{4}.*)', text)
+            if cleaned:
+                return parser.parse(cleaned.group(1), fuzzy=True)
+            return None
+        except:
+            return None
+
     df = pd.DataFrame(data)
-    
+
     if len(df) == 0:
         st.warning("No data available for visualization")
         return
-    
-    # Convert dates
-    df['scraped_at'] = pd.to_datetime(df['scraped_at'])
-    df['year'] = df['scraped_at'].dt.year.astype(int)
-    df['month'] = df['scraped_at'].dt.month
-    
-    # Filtering by source with a unique key for the multiselect widget
-    sources = df['source'].unique()
-    selected_source = st.multiselect('Select Sources', sources, default=sources, key="source_selection")  # Added a unique key
-    filtered_df = df[df['source'].isin(selected_source)]
-    
+
+    # Parsing tanggal
+    df['parsed_date'] = df['date'].apply(extract_date)
+    df = df.dropna(subset=['parsed_date'])
+
+    # Ekstrak tahun dan bulan
+    df['year'] = df['parsed_date'].dt.year
+    df['month'] = df['parsed_date'].dt.month
+
+    filtered_df = df
+
     # 1. Number of articles by source
     st.subheader("1. Number of Articles by Source")
     source_counts = filtered_df['source'].value_counts()
     fig1 = px.bar(source_counts, title='Total Articles by Source')
     st.plotly_chart(fig1)
-    
+
     # 2. Yearly trends
     st.subheader("2. Yearly Trends")
+    yearly_data = filtered_df.groupby('year').size().reset_index(name='count')
+    yearly_data['year'] = yearly_data['year'].astype(int)
 
-# Agregasi data hanya berdasarkan tahun
-    yearly_data = filtered_df.groupby('year').size().reset_index(name='count')  # Defining yearly_data without source
-    yearly_data['year'] = yearly_data['year'].astype(int)  # Ensuring year is an integer
-
-# Create the bar chart
     fig2 = px.bar(yearly_data, x='year', y='count', title='Articles by Year')
-
-# Update x-axis to format years without decimals and as integers
     fig2.update_xaxes(tickmode='array', tickvals=yearly_data['year'].unique())
-
-# Display the chart
     st.plotly_chart(fig2)
 
-
-    # 3. Monthly trends for selected year using bar chart
+    # 3. Monthly trends for selected year
     st.subheader("3. Monthly Trends for Selected Year")
-    selected_year = st.selectbox('Select Year for Monthly Breakdown', sorted(df['year'].unique()), key="year_selection")  # Added a unique key
-    monthly_data = filtered_df[filtered_df['year'] == selected_year].groupby(['month', 'source']).size().reset_index(name='count')
+    selected_year = st.selectbox('Select Year for Monthly Breakdown', sorted(filtered_df['year'].unique(), reverse=True))
+
+    monthly_data = filtered_df[filtered_df['year'] == selected_year] \
+        .groupby(['month', 'source']).size().reset_index(name='count')
+
+    # Ubah angka bulan jadi nama bulan
     monthly_data['month'] = pd.to_datetime(monthly_data['month'], format='%m').dt.strftime('%B')
-    
-    # Creating a bar chart for monthly trends
+
     fig3 = px.bar(monthly_data, x='month', y='count', color='source',
                   title=f'Monthly Articles in {selected_year}')
     st.plotly_chart(fig3)
+
+    # Debugging output (optional)
+    # st.write(df[['date', 'parsed_date', 'year', 'month']].head(10))
+
     # 4. Word frequency analysis as word cloud
     st.subheader("4. Most Common Words - Bar Chart & Word Cloud")
     
@@ -200,11 +215,7 @@ def visualize_data():
 
     # 5. Data tables by source
     st.subheader("5. Article Details")
-    for source in selected_source:
-        st.write(f"\n**{source} Articles**")
-        source_df = filtered_df[filtered_df['source'] == source][['title', 'date', 'link', 'scraped_at']]
-        st.dataframe(source_df)
-
+    st.dataframe(filtered_df[['title', 'date', 'link', 'scraped_at']])
 def main():
     st.title("Ballet News Scraper")
     
